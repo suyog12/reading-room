@@ -1,69 +1,48 @@
-import Image from "next/image";
-import styles from "./page.module.css";
+import { createClient } from "@/lib/supabase/server";
+import { redirect } from "next/navigation";
+import Link from "next/link";
 
-export default function Home() {
+export default async function Landing() {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+
+  if (user) {
+    const { data: profile } = await supabase
+      .from("profiles").select("status").eq("id", user.id).single();
+    // Home is the building now, not the old /room test page.
+    redirect(profile?.status === "approved" ? "/floor" : "/pending");
+  }
+
   return (
-    <div className={styles.page}>
-      <main className={styles.main}>
-        <Image
-          className={styles.logo}
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className={styles.intro}>
-          <h1>
-            To get started, edit the{" "}
-            <code className={styles.code}>page.tsx</code> file.
-          </h1>
-          <p>
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <main style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "#F1EEE8", fontFamily: "system-ui" }}>
+      <div style={{ maxWidth: 460, padding: 32, textAlign: "center" }}>
+        <div style={{ display: "flex", gap: 4, justifyContent: "center", alignItems: "flex-end", marginBottom: 26, height: 62 }}>
+          {["#7A3230", "#2F5E4E", "#2B3C5C", "#96702C", "#523052"].map((c, i) => (
+            <div key={c} style={{ width: 13, height: 44 + (i % 3) * 9, background: c, borderRadius: 2 }} />
+          ))}
         </div>
-        <div className={styles.ctas}>
-          <a
-            className={styles.primary}
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className={styles.logo}
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className={styles.secondary}
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+
+        <h1 style={{ font: "600 30px/1.15 Georgia, serif", color: "#231F1A", marginBottom: 12 }}>
+          The Reading Room
+        </h1>
+        <p style={{ fontSize: 15, lineHeight: 1.65, color: "#6B6459", marginBottom: 30 }}>
+          Your slide decks and photo sets become books on a shelf. Pull one down,
+          open the cover, turn the pages. Your notes live on the left.
+        </p>
+
+        <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+          <Link href="/login" style={{ padding: "11px 22px", background: "#2F5E4E", color: "#fff", borderRadius: 4, fontSize: 14, textDecoration: "none" }}>
+            Sign in
+          </Link>
+          <Link href="/signup" style={{ padding: "11px 22px", color: "#231F1A", border: "1px solid #C9C2B6", borderRadius: 4, fontSize: 14, textDecoration: "none" }}>
+            Request an account
+          </Link>
         </div>
-      </main>
-    </div>
+
+        <p style={{ fontSize: 12, color: "#9A9184", marginTop: 26 }}>
+          New accounts are approved by hand.
+        </p>
+      </div>
+    </main>
   );
 }

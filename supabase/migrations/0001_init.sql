@@ -1,0 +1,1 @@
+-- paste the schema from docs/setup.md here, then run it in the SQL editor
