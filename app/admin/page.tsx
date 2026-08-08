@@ -21,7 +21,19 @@ export default async function AdminPage() {
     "use server";
     const id = formData.get("id") as string;
     const status = formData.get("status") as string;
+    if (status !== "approved" && status !== "suspended") return;
+
     const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    // A server action is a public endpoint. The page guard above only stops
+    // the page rendering; it does not stop someone posting to the action.
+    // RLS would refuse this anyway, but the check belongs here as well.
+    const { data: me } = await supabase
+      .from("profiles").select("role").eq("id", user.id).single();
+    if (me?.role !== "admin") return;
+
     await supabase.from("profiles").update({ status }).eq("id", id);
     revalidatePath("/admin");
   };

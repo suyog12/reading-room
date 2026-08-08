@@ -3,8 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { extractPdf, extractImages, type ExtractedPage } from "@/lib/pdf/extract";
-import { BOOKS_PER_CASE, MAX_FILE_BYTES } from "@/lib/constants";
+import { extractPdf, extractImages, prepareVideos, compressVideo, type ExtractedPage } from "@/lib/pdf/extract";
+import { BOOKS_PER_CASE, MAX_FILE_BYTES, MAX_VIDEO_BYTES } from "@/lib/constants";
 
 /* Palette stays with the room: warm paper, ink, forest, book cloth. The shape
    is what carries the personality — fat radii, a hard offset shadow, chunky
@@ -23,7 +23,7 @@ const CLOTH = [
   { hex: "#414651", name: "Slate" },
 ];
 
-type Kind = "deck" | "photos" | "notebook";
+type Kind = "deck" | "photos" | "videos" | "notebook";
 type Layout = "notes" | "facing" | "continuous";
 
 export default function AddBookFlow({
@@ -43,6 +43,7 @@ export default function AddBookFlow({
   const [author, setAuthor] = useState("");
   const [color, setColor] = useState(CLOTH[0].hex);
   const [layout, setLayout] = useState<Layout>("notes");
+  const [shrink, setShrink] = useState(true);
   const [busy, setBusy] = useState(false);
   const [pct, setPct] = useState(0);
   const [status, setStatus] = useState<string | null>(null);
@@ -63,8 +64,12 @@ export default function AddBookFlow({
 
   const pickFiles = (list: FileList | null) => {
     const arr = Array.from(list ?? []);
-    const big = arr.find((f) => f.size > MAX_FILE_BYTES);
-    if (big) { setError(`${big.name} is bigger than 50MB`); return; }
+    const big = arr.find((f) =>
+      f.size > (f.type.startsWith("video/") ? MAX_VIDEO_BYTES : MAX_FILE_BYTES));
+    if (big) {
+      setError(`${big.name} is bigger than the limit (50MB for images, 200MB for video)`);
+      return;
+    }
     setError(null);
     setFiles(arr);
   };
@@ -85,9 +90,25 @@ export default function AddBookFlow({
       const supabase = createClient();
       setStatus("Reading your pages");
       const isPdf = files.length === 1 && files[0].type === "application/pdf";
-      const pages: ExtractedPage[] = isPdf
-        ? await extractPdf(files[0], (d, t) => { setPct(Math.round((d / t) * 45)); setStatus(`Rendering page ${d} of ${t}`); })
-        : await extractImages(files, (d, t) => { setPct(Math.round((d / t) * 45)); setStatus(`Processing image ${d} of ${t}`); });
+      const pages: ExtractedPage[] =
+        kind === "videos"
+          ? await prepareVideos(files, (d, t) => { setPct(Math.round((d / t) * 25)); setStatus(`Reading clip ${d} of ${t}`); })
+          : isPdf
+          ? await extractPdf(files[0], (d, t) => { setPct(Math.round((d / t) * 45)); setStatus(`Rendering page ${d} of ${t}`); })
+          : await extractImages(files, (d, t) => { setPct(Math.round((d / t) * 45)); setStatus(`Processing image ${d} of ${t}`); });
+
+      // Optional re-encode. Real time, so only worth it when asked for.
+      if (kind === "videos" && shrink) {
+        for (let i = 0; i < pages.length; i++) {
+          setStatus(`Shrinking clip ${i + 1} of ${pages.length}`);
+          const { blob, contentType } = await compressVideo(
+            pages[i].full as File,
+            (f) => setPct(25 + Math.round(((i + f) / pages.length) * 25))
+          );
+          pages[i].full = blob;
+          pages[i].contentType = contentType;
+        }
+      }
 
       setStatus("Making the book");
       const { data: { user } } = await supabase.auth.getUser();
@@ -105,24 +126,28 @@ export default function AddBookFlow({
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({
           bookId: book.id,
-          items: pages.map((p) => ({ pageId: p.pageId, bytes: p.full.size, thumbBytes: p.thumb.size })),
+          items: pages.map((p) => ({
+            pageId: p.pageId, bytes: p.full.size,
+            thumbBytes: p.thumb.size, contentType: p.contentType,
+          })),
         }),
       }).then((r) => r.json());
       if (presign.error) throw new Error(presign.error);
 
-      const jobs = presign.signed as { pageId: string; pageUrl: string; thumbUrl: string }[];
+      const jobs = presign.signed as { pageId: string; ext: string; pageUrl: string; thumbUrl: string }[];
       const queue = [...jobs];
       let done = 0;
-      const put = async (url: string, blob: Blob) => {
-        const res = await fetch(url, { method: "PUT", body: blob, headers: { "content-type": "image/webp" } });
+      const put = async (url: string, blob: Blob, type: string) => {
+        const res = await fetch(url, { method: "PUT", body: blob, headers: { "content-type": type } });
         if (!res.ok) throw new Error(`R2 refused the upload (${res.status})`);
       };
       const worker = async () => {
         while (queue.length) {
           const job = queue.shift()!;
           const page = pages.find((p) => p.pageId === job.pageId)!;
-          await put(job.pageUrl, page.full);
-          await put(job.thumbUrl, page.thumb);
+          // The content type is part of the signature, so it has to match.
+          await put(job.pageUrl, page.full, page.contentType);
+          await put(job.thumbUrl, page.thumb, "image/webp");
           done++;
           setPct(45 + Math.round((done / jobs.length) * 50));
           setStatus(`Shelving page ${done} of ${jobs.length}`);
@@ -133,7 +158,12 @@ export default function AddBookFlow({
       setStatus("Almost there");
       const commit = await fetch(`/api/books/${book.id}/commit`, {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ pageIds: pages.map((p) => p.pageId) }),
+        body: JSON.stringify({
+          pages: pages.map((p) => {
+            const job = jobs.find((j) => j.pageId === p.pageId)!;
+            return { pageId: p.pageId, ext: job.ext, mediaType: p.mediaType, durationMs: p.durationMs };
+          }),
+        }),
       }).then((r) => r.json());
       if (commit.error) throw new Error(commit.error);
 
@@ -188,6 +218,7 @@ export default function AddBookFlow({
               options={[
                 { id: "deck", title: "A slide deck", sub: "PDF. Every page becomes a page.", glyph: <GlyphDeck /> },
                 { id: "photos", title: "Photos", sub: "Any number. They land in order.", glyph: <GlyphPhotos /> },
+                { id: "videos", title: "Video clips", sub: "Each clip becomes a page you can play.", glyph: <GlyphPlay /> },
                 { id: "notebook", title: "An empty notebook", sub: "Nothing to upload. Just write.", glyph: <GlyphPen /> },
               ]}
             />
@@ -214,12 +245,30 @@ export default function AddBookFlow({
                 display: "inline-block", padding: "9px 18px", borderRadius: 99, cursor: "pointer",
                 background: INK, color: PAPER, fontSize: 13, fontWeight: 500,
               }}>
-                Choose {kind === "deck" ? "a PDF" : "photos"}
-                <input type="file" hidden multiple={kind === "photos"}
-                  accept={kind === "deck" ? "application/pdf" : "image/*"}
+                Choose {kind === "deck" ? "a PDF" : kind === "videos" ? "clips" : "photos"}
+                <input type="file" hidden multiple={kind !== "deck"}
+                  accept={kind === "deck" ? "application/pdf" : kind === "videos" ? "video/mp4,video/webm,video/quicktime" : "image/*"}
                   onChange={(e) => pickFiles(e.target.files)} />
               </label>
             </div>
+          )}
+
+          {!isNotebook && kind === "videos" && step === 1 && files.length > 0 && (
+            <label style={{
+              display: "flex", gap: 10, alignItems: "flex-start", marginTop: 14,
+              padding: "11px 12px", borderRadius: 13, cursor: "pointer",
+              border: `2px solid ${shrink ? INK : "#E4DED2"}`,
+              background: shrink ? WASH : "transparent",
+            }}>
+              <input type="checkbox" checked={shrink} onChange={(e) => setShrink(e.target.checked)} style={{ marginTop: 3 }} />
+              <span>
+                <span style={{ display: "block", fontSize: 13, color: INK }}>Shrink before uploading</span>
+                <span style={{ display: "block", fontSize: 11.5, color: SOFT, marginTop: 2, lineHeight: 1.5 }}>
+                  Re-encodes to 1280px. Takes about as long as the clip runs, and
+                  usually saves most of the size. Turn it off to upload as is.
+                </span>
+              </span>
+            </label>
           )}
 
           {step === (isNotebook ? 1 : 2) && (
@@ -412,6 +461,9 @@ const GlyphDeck = () => (
 );
 const GlyphPhotos = () => (
   <svg width="21" height="21" viewBox="0 0 22 22"><rect x="3" y="5" width="16" height="12" rx="2" {...stroke} /><circle cx="8" cy="9.5" r="1.6" {...stroke} /><path d="M4 15l4.5-4 3 2.6L15 10l3 3" {...stroke} /></svg>
+);
+const GlyphPlay = () => (
+  <svg width="21" height="21" viewBox="0 0 22 22"><rect x="3" y="5" width="16" height="12" rx="2" {...stroke} /><path d="M10 9.5l3.5 2-3.5 2z" {...stroke} /></svg>
 );
 const GlyphPen = () => (
   <svg width="21" height="21" viewBox="0 0 22 22"><path d="M4 18l1-4 9-9 3 3-9 9z" {...stroke} /><path d="M13 5l3 3" {...stroke} /><path d="M4 18h5" {...stroke} /></svg>

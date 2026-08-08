@@ -8,17 +8,24 @@ export default async function ProfilePage() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("first_name, last_name, username, dob, email, avatar_key, display_name, status")
-    .eq("id", user.id)
-    .single();
+  // email and dob are no longer readable through the table by anyone, so your
+  // own row comes back through a function that only ever returns one row.
+  const { data: rows } = await supabase.rpc("my_profile");
+  const profile = rows?.[0];
 
   const avatarUrl = profile?.avatar_key ? await signRead(profile.avatar_key, 3600) : null;
 
   return (
     <ProfileForm
-      profile={{ ...profile, email: profile?.email ?? user.email ?? "" }}
+      profile={{
+        first_name: profile?.first_name ?? "",
+        last_name: profile?.last_name ?? "",
+        username: profile?.username ?? "",
+        dob: profile?.dob ?? "",
+        email: profile?.email ?? user.email ?? "",
+        display_name: profile?.display_name ?? "",
+        status: profile?.status ?? null,
+      }}
       avatarUrl={avatarUrl}
     />
   );

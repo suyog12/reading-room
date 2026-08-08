@@ -27,7 +27,7 @@ export default async function VisitPage({
 
   // If they haven't let you in, this comes back empty — the policy decides.
   const { data: rooms } = await supabase
-    .from("rooms").select("id, name, floor, position")
+    .from("rooms").select("id, name, floor, position, visibility")
     .eq("owner_id", host.id).order("floor").order("position");
 
   const onThisFloor = (rooms ?? []).filter((r) => r.floor === floor);

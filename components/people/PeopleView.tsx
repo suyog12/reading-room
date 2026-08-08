@@ -37,7 +37,13 @@ export default function PeopleView({
     return () => clearTimeout(t);
   }, [q]);
 
-  const known = new Set(rows.map((r) => r.person.id));
+  /**
+   * A row grants one person access to one building, so the two directions are
+   * independent. Asking to visit someone who already visits you is a normal
+   * thing to want, so each side is tracked separately.
+   */
+  const iVisit = new Set(rows.filter((r) => r.iAmGuest).map((r) => r.person.id));
+  const theyVisit = new Set(rows.filter((r) => !r.iAmGuest).map((r) => r.person.id));
 
   // Waiting on me: the other side asked, I haven't answered.
   const toAnswer = rows.filter((r) => r.status === "pending" && !r.mine);
@@ -71,23 +77,30 @@ export default function PeopleView({
               {searching && <Muted>Looking…</Muted>}
               {!searching && results.length === 0 && <Muted>Nobody by that name.</Muted>}
               {results.map((p) => (
-                <PersonRow key={p.id} person={{ ...p, avatarUrl: null }}>
-                  {known.has(p.id) ? (
-                    <Muted>Already connected</Muted>
-                  ) : (
-                    <span style={{ display: "flex", gap: 7 }}>
+                <PersonRow key={p.id} person={{ ...p, avatarUrl: null }}
+                  note={
+                    iVisit.has(p.id) && theyVisit.has(p.id) ? "you visit each other"
+                    : iVisit.has(p.id) ? "you can visit them"
+                    : theyVisit.has(p.id) ? "they can visit you"
+                    : undefined
+                  }>
+                  <span style={{ display: "flex", gap: 7 }}>
+                    {!iVisit.has(p.id) && (
                       <form action={request}>
                         <input type="hidden" name="otherId" value={p.id} />
                         <input type="hidden" name="as" value="guest" />
                         <button style={btn(false)}>Ask to visit</button>
                       </form>
+                    )}
+                    {!theyVisit.has(p.id) && (
                       <form action={request}>
                         <input type="hidden" name="otherId" value={p.id} />
                         <input type="hidden" name="as" value="host" />
                         <button style={btn(true)}>Invite them</button>
                       </form>
-                    </span>
-                  )}
+                    )}
+                    {iVisit.has(p.id) && theyVisit.has(p.id) && <Muted>Both ways</Muted>}
+                  </span>
                 </PersonRow>
               ))}
             </div>

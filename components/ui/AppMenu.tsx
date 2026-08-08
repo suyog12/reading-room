@@ -24,7 +24,11 @@ export default async function AppMenu() {
   async function signOut() {
     "use server";
     const supabase = await createClient();
-    await supabase.auth.signOut();
+    // "global" revokes every refresh token for this user, so a stolen or
+    // copied session cannot be refreshed after you log out. The access token
+    // already issued stays valid until it expires — that is inherent to a
+    // JWT, and the reason the token lifetime is worth shortening.
+    await supabase.auth.signOut({ scope: "global" });
     redirect("/login");
   }
 

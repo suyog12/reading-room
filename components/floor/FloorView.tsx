@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Space, { C, D, PROJ } from "@/components/space/Space";
 import { Bubble, BubbleTitle, BubbleHint, BubbleButtons, bubbleInput, INK, SOFT, PAPER } from "@/components/ui/Bubble";
 
-type Room = { id: string; name: string; floor: number; position: number };
+type Room = { id: string; name: string; floor: number; position: number; visibility?: string };
 
 /** All four slots are visible without turning: two on the back wall, one each side. */
 const SLOT_LABEL = ["Back left", "Back right", "Left wall", "Right wall"];
@@ -78,6 +78,9 @@ export default function FloorView({
   const Doorway = (slot: number, style: React.CSSProperties) => {
     const room = at(slot);
     const SLAB = 14;
+    // A guest can see the door and be told it is shut. They cannot open it,
+    // and the rooms behind it return nothing regardless of what they click.
+    const shut = !canEdit && room?.visibility === "closed";
     return (
       <div style={{ position: "absolute", width: DOOR_W, height: DOOR_H, transformStyle: "preserve-3d", ...style }}>
         {/* architrave: four faces standing out of the wall */}
@@ -104,7 +107,7 @@ export default function FloorView({
 
         {/* the slab, sitting at the wall plane so the frame reads as depth */}
         <button
-          onClick={() => (room ? enter(room) : canEdit && setNaming(slot))}
+          onClick={() => (shut ? undefined : room ? enter(room) : canEdit && setNaming(slot))}
           style={{
             position: "absolute", inset: 0, transformStyle: "preserve-3d",
             transform: `translateZ(${SLAB}px)`,
@@ -113,6 +116,7 @@ export default function FloorView({
         >
           <span style={{
             position: "absolute", inset: 0,
+            filter: shut ? "blur(3px) saturate(.55) brightness(.85)" : "none",
             background: room
               ? `linear-gradient(100deg, ${C.woodDark}, ${C.wood} 52%, ${C.woodLip})`
               : "rgba(252,250,246,.72)",
@@ -126,6 +130,20 @@ export default function FloorView({
             background: room ? C.woodDark : "rgba(214,208,196,.9)",
           }} />
 
+          {shut && (
+            <span style={{
+              position: "absolute", inset: 0, display: "grid", placeItems: "center", zIndex: 2,
+              background: "rgba(20,16,12,.34)",
+            }}>
+              <span style={{
+                background: "rgba(255,253,248,.94)", border: "2px solid #231F1A", borderRadius: 6,
+                padding: "8px 12px", fontSize: 11, letterSpacing: ".14em", textTransform: "uppercase",
+                color: "#231F1A", textAlign: "center", lineHeight: 1.5, maxWidth: "84%",
+              }}>
+                Visitors<br />not allowed
+              </span>
+            </span>
+          )}
           {room ? (
             <>
               <span style={{ position: "absolute", inset: "9% 13% 54%", border: "3px solid rgba(0,0,0,.18)" }} />
@@ -139,7 +157,7 @@ export default function FloorView({
                 fontSize: 12.5, letterSpacing: ".14em", textTransform: "uppercase", color: "#2A1F08",
                 fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
               }}>
-                {room.name}
+                {shut ? "Private" : room.name}
               </span>
             </>
           ) : (

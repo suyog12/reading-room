@@ -4,10 +4,18 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import NoteEditor from "./NoteEditor";
 
-type Page = { id: string; position: number; url: string | null; doc: any };
+type Page = {
+  id: string; position: number; url: string | null; doc: any;
+  media_type?: string | null; poster?: string | null;
+  /** The viewer may not see this one. No key ever reached the browser. */
+  locked?: boolean;
+  /** The owner has hidden it. Always false for anyone else. */
+  hidden?: boolean;
+};
 type Book = {
   id: string; title: string; author: string | null;
   spine_color: string; layout: string; kind?: string;
+  visibility?: string;
 };
 
 const RATIO = 1.42;   // page height / page width
@@ -68,9 +76,12 @@ function buildLeaves(pages: Page[], layout: string, kind = "deck"): { recto: Fac
 }
 
 export default function Reader({
-  book, pages, canEdit, backHref,
+  book, pages, canEdit, backHref, setBookVisibility, setPageVisibility, deleteBook,
 }: {
   book: Book; pages: Page[]; canEdit: boolean; backHref: string;
+  setBookVisibility?: (fd: FormData) => Promise<void>;
+  setPageVisibility?: (fd: FormData) => Promise<void>;
+  deleteBook?: () => Promise<void>;
 }) {
   const router = useRouter();
   const [leaf, setLeaf] = useState(0);
@@ -137,6 +148,46 @@ export default function Reader({
   }, [next, prev, shelve]);
 
   const { pw: PW, ph: PH } = dim;
+  /** The media pages currently open, so downloading saves what you can see. */
+  const visible: Page[] = (() => {
+    const lf = leavesArr[leaf - 1];
+    const cur = leavesArr[leaf];
+    const out: Page[] = [];
+    const take = (f: any) => {
+      if (f?.kind === "image" && f.page?.url) out.push(f.page);
+      if (f?.kind === "cover" && f.page?.url) out.push(f.page);
+    };
+    take(lf?.verso);
+    take(cur?.recto);
+    return out.filter((p, i, a) => a.findIndex((q) => q.id === p.id) === i);
+  })();
+
+  const [saving, setSaving] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+
+  const download = async () => {
+    if (!visible.length) return;
+    setSaving(true);
+    try {
+      for (const p of visible) {
+        const res = await fetch(`/api/pages/${p.id}/download`);
+        if (!res.ok) continue;
+        const { url } = await res.json();
+        // The signed URL carries Content-Disposition, so this saves rather
+        // than navigating away.
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        await new Promise((r) => setTimeout(r, 350));   // browsers throttle bursts
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const dur = reduced ? 0 : TURN;
   const shift = leaf === 0 ? -PW / 2 : leaf === leaves ? PW / 2 : 0;
   const showingNote = (book.kind === "notebook" || book.layout === "notes") && leaf > 0 && leaf < leaves;
@@ -178,28 +229,84 @@ export default function Reader({
         );
 
       case "image":
-        if (!face.page.url) return null;
-        if (face.half) {
+        if (face.page.hidden && face.page.url) {
+          // The owner still sees it, dimmed, with a mark. Hiding something
+          // you cannot then find again would be worse than useless.
           return (
             <div style={{ position: "absolute", inset: 0, overflow: "hidden" }}>
               <img src={face.page.url} alt="" style={{
+                width: "100%", height: "100%", objectFit: "contain", opacity: .3, filter: "grayscale(1)",
+              }} />
+              <span style={{
+                position: "absolute", top: 14, left: "50%", transform: "translateX(-50%)",
+                background: "rgba(35,31,26,.86)", color: "#FFFDF8", borderRadius: 99,
+                padding: "5px 12px", fontSize: 9.5, letterSpacing: ".18em", textTransform: "uppercase",
+              }}>
+                Hidden from guests
+              </span>
+            </div>
+          );
+        }
+        if (face.page.locked) {
+          return (
+            <div style={{
+              position: "absolute", inset: 0, display: "grid", placeItems: "center",
+              background: "#F2EDE1",
+            }}>
+              <span style={{
+                fontSize: 10, letterSpacing: ".24em", textTransform: "uppercase",
+                color: "#B3AA9E",
+              }}>
+                Private
+              </span>
+            </div>
+          );
+        }
+        // A video page plays in place. Everything else renders as before.
+        if (face.page.media_type === "video") {
+          if (!face.page.url) return null;
+          return (
+            <div style={{ position: "absolute", inset: 0, overflow: "hidden", background: "#12100D" }}>
+              <video
+                src={face.page.url}
+                poster={face.page.poster ?? undefined}
+                controls
+                playsInline
+                preload="metadata"
+                onClick={(e) => e.stopPropagation()}
+                style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
+              />
+            </div>
+          );
+        }
+        // A notebook page carries no media, so there is nothing to draw. This
+        // has to come before every branch below, both so notebooks work and so
+        // the type narrows to a plain string for the img tags.
+        if (!face.page.url) return null;
+        const src = face.page.url;
+
+        // Photos fill the page. Slides are contained, because cropping a slide
+        // cuts off content, while cropping a photo just reframes it.
+        if (face.half) {
+          return (
+            <div style={{ position: "absolute", inset: 0, overflow: "hidden" }}>
+              <img src={src} alt="" style={{
                 position: "absolute", top: 0, height: "100%", width: PW * 2,
                 left: face.half === "left" ? 0 : -PW, objectFit: "cover",
               }} />
             </div>
           );
         }
-        if (!face.page.url) return null;
         if (book.layout === "facing") {
           // The whole picture, never cropped. A blurred, scaled copy fills the
           // margin so the page has no dead white bands around the image.
           return (
             <div style={{ position: "absolute", inset: 0, overflow: "hidden" }}>
-              <img src={face.page.url} alt="" aria-hidden style={{
+              <img src={src} alt="" aria-hidden style={{
                 position: "absolute", inset: 0, width: "100%", height: "100%",
                 objectFit: "cover", filter: "blur(26px) brightness(.82)", transform: "scale(1.15)",
               }} />
-              <img src={face.page.url} alt="" style={{
+              <img src={src} alt="" style={{
                 position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "contain",
               }} />
             </div>
@@ -207,7 +314,7 @@ export default function Reader({
         }
         return (
           <div style={{ height: "100%", padding: "22px 22px 28px", position: "relative" }}>
-            <img src={face.page.url} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+            <img src={src} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
             <span style={{ position: "absolute", bottom: 11, right: 22, fontSize: 8.5, letterSpacing: ".18em", color: "#A79E92" }}>
               {String(face.page.position).padStart(2, "0")}
             </span>
@@ -305,6 +412,49 @@ export default function Reader({
         <Ctl onClick={next} disabled={leaf === leaves}>→</Ctl>
         <span style={{ width: 1, height: 20, background: "rgba(255,255,255,.2)" }} />
         <Ctl onClick={shelve}>Shelve</Ctl>
+        {canEdit && setPageVisibility && visible.map((p) => (
+          // One control per page on screen. A spread shows two, each labelled
+          // with its own number, so it is never ambiguous which one goes.
+          <form action={setPageVisibility} key={p.id}>
+            <input type="hidden" name="pageId" value={p.id} />
+            <input type="hidden" name="visibility" value={p.hidden ? "open" : "hidden"} />
+            <Ctl onClick={() => {}}>
+              {p.hidden ? "Show" : "Hide"} {String(p.position).padStart(2, "0")}
+            </Ctl>
+          </form>
+        ))}
+        {canEdit && setBookVisibility && (
+          <form action={setBookVisibility}>
+            <input type="hidden" name="visibility" value={book.visibility === "private" ? "open" : "private"} />
+            <Ctl onClick={() => {}}>
+              {book.visibility === "private" ? "Private" : "Make private"}
+            </Ctl>
+          </form>
+        )}
+        {canEdit && deleteBook && (
+          confirming ? (
+            <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <span style={{ fontSize: 11, letterSpacing: ".1em", color: "#E9BFB4" }}>
+                Delete for good?
+              </span>
+              <form action={deleteBook}>
+                <button style={{
+                  padding: "9px 15px", borderRadius: 3, cursor: "pointer",
+                  border: "1px solid #C77", background: "rgba(160,60,45,.35)",
+                  color: "#FFF3EF", fontSize: 11, letterSpacing: ".14em", textTransform: "uppercase",
+                }}>Yes, delete</button>
+              </form>
+              <Ctl onClick={() => setConfirming(false)}>Keep</Ctl>
+            </span>
+          ) : (
+            <Ctl onClick={() => setConfirming(true)}>Delete</Ctl>
+          )
+        )}
+        {canEdit && visible.length > 0 && (
+          <Ctl onClick={download} disabled={saving}>
+            {saving ? "Saving" : visible.length > 1 ? "Save pages" : "Save page"}
+          </Ctl>
+        )}
 
         {showingNote && canEdit && (
           <>

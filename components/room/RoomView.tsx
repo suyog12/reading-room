@@ -43,9 +43,9 @@ const WALL_NAME = ["Shelves", "More shelves", "More shelves", "The way out"];
 
 export default function RoomView({
   room, cases, books, selectedCase, canEdit,
-  createCase, createNotebook, renameRoom, renameCase,
+  createCase, createNotebook, renameRoom, renameCase, deleteCase, deleteRoom,
 }: {
-  room: { id: string; name: string; floor: number };
+  room: { id: string; name: string; floor: number; visibility?: string };
   cases: Case[];
   books: Book[];
   selectedCase: string | null;
@@ -54,6 +54,8 @@ export default function RoomView({
   createNotebook: (fd: FormData) => Promise<void>;
   renameRoom: (fd: FormData) => Promise<void>;
   renameCase: (fd: FormData) => Promise<void>;
+  deleteCase: (fd: FormData) => Promise<void>;
+  deleteRoom: (fd: FormData) => Promise<void>;
 }) {
   const router = useRouter();
   const [turn, setTurn] = useState(0);
@@ -254,6 +256,19 @@ export default function RoomView({
         <span style={{ fontSize: 11, color: SOFT }}>
           {cases.length}/{MAX_CASES_PER_ROOM} cases · {books.length} books
         </span>
+
+        {/* Sits with the room's own chrome. It used to be pinned top right,
+            where it collided with the account menu. */}
+        {selected && (
+          <button onClick={() => select(null)} style={{
+            marginLeft: 4, padding: "6px 13px", borderRadius: 99, cursor: "pointer",
+            border: `2px solid ${C.ink}`, background: "rgba(255,253,248,.92)",
+            color: C.ink, fontSize: 11.5, letterSpacing: ".08em",
+            boxShadow: "3px 3px 0 rgba(35,31,26,.13)",
+          }}>
+            ← Step back
+          </button>
+        )}
       </div>
 
       {/* which wall you're facing */}
@@ -277,18 +292,6 @@ export default function RoomView({
         </span>
         <button onClick={() => rotate(1)} style={turnBtn}>›</button>
       </div>
-
-      {selected && (
-        <button onClick={() => select(null)} style={{
-          position: "absolute", top: 20, right: 26, zIndex: 9,
-          padding: "9px 16px", borderRadius: 99, cursor: "pointer",
-          border: `2px solid ${C.ink}`, background: "rgba(255,253,248,.92)",
-          color: C.ink, fontSize: 12, letterSpacing: ".1em",
-          boxShadow: "4px 4px 0 rgba(35,31,26,.13)",
-        }}>
-          ← Step back
-        </button>
-      )}
 
       {/* the cases on this wall, always reachable even when scrolled down */}
       {WALL_CASES[turn] && (
@@ -385,12 +388,29 @@ export default function RoomView({
           <form action={renameRoom} onSubmit={() => setRenamingRoom(false)}>
             <input type="hidden" name="roomId" value={room.id} />
             <Bubble tail="none">
-              <BubbleTitle>Rename the room</BubbleTitle>
+              <BubbleTitle>Room settings</BubbleTitle>
               <BubbleHint>Currently called {room.name}.</BubbleHint>
               <input name="name" autoFocus defaultValue={room.name} style={bubbleInput} />
+              <select name="visibility" defaultValue={room.visibility ?? "open"} style={bubbleSelect}>
+                <option value="open">Guests may come in</option>
+                <option value="closed">Visitors not allowed</option>
+              </select>
               <BubbleButtons onCancel={() => setRenamingRoom(false)} submitLabel="Save" />
             </Bubble>
           </form>
+
+          <div style={{ marginTop: 12 }}>
+            {cases.length > 0 ? (
+              <p style={{ fontSize: 11.5, color: SOFT, textAlign: "center", lineHeight: 1.5 }}>
+                Empty the room of its bookcases before it can be taken down.
+              </p>
+            ) : (
+              <form action={deleteRoom}>
+                <input type="hidden" name="roomId" value={room.id} />
+                <button style={dangerBtn}>Take this room down</button>
+              </form>
+            )}
+          </div>
         </Overlay>
       )}
 
@@ -411,11 +431,32 @@ export default function RoomView({
               <BubbleButtons onCancel={() => setRenamingCase(null)} submitLabel="Save" />
             </Bubble>
           </form>
+
+          <div style={{ marginTop: 12 }}>
+            {booksIn(renamingCase.id).length > 0 ? (
+              <p style={{ fontSize: 11.5, color: SOFT, textAlign: "center", lineHeight: 1.5 }}>
+                {booksIn(renamingCase.id).length} book{booksIn(renamingCase.id).length > 1 ? "s" : ""} still on it.
+                Move or delete them first.
+              </p>
+            ) : (
+              <form action={deleteCase}>
+                <input type="hidden" name="caseId" value={renamingCase.id} />
+                <input type="hidden" name="roomId" value={room.id} />
+                <button style={dangerBtn}>Take this bookcase down</button>
+              </form>
+            )}
+          </div>
         </Overlay>
       )}
     </main>
   );
 }
+
+const dangerBtn: React.CSSProperties = {
+  width: "100%", padding: "10px 0", borderRadius: 99, cursor: "pointer",
+  border: "2px solid #C79A8E", background: "rgba(255,253,248,.94)",
+  color: "#8A3A2B", fontSize: 12.5, fontWeight: 600,
+};
 
 const turnBtn: React.CSSProperties = {
   width: 30, height: 30, borderRadius: "50%", border: "none", cursor: "pointer",
