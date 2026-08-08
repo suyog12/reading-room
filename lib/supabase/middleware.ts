@@ -29,7 +29,19 @@ export async function updateSession(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
 
   const path = request.nextUrl.pathname;
+
+  /**
+   * API routes are never redirected.
+   *
+   * Redirecting a fetch to /login hands back an HTML page where the caller
+   * expected JSON, which is both useless and confusing to debug. Every route
+   * under /api checks the session itself and answers 401 when it needs to —
+   * and /api/auth/* has to work before a session exists at all.
+   */
+  const isApi = path.startsWith("/api");
+
   const isPublic =
+    isApi ||
     path === "/" ||
     path.startsWith("/login") ||
     path.startsWith("/signup") ||
