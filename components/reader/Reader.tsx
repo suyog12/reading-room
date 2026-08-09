@@ -18,7 +18,12 @@ type Book = {
   visibility?: string;
 };
 
-const RATIO = 1.42;   // page height / page width
+/**
+ * Starting shape only. The book measures its first page and adopts that
+ * proportion, so an A4 PDF, a 16:9 deck and a square photo each get a book
+ * the right shape instead of being letterboxed or cropped into a fixed one.
+ */
+const DEFAULT_RATIO = 1.42;
 const TURN = 780;
 
 type Face =
@@ -90,6 +95,21 @@ export default function Reader({
   const [size, setSize] = useState(17);
   const [reduced, setReduced] = useState(false);
   const [dim, setDim] = useState({ pw: 330, ph: 470 });
+  const [ratio, setRatio] = useState(DEFAULT_RATIO);
+
+  // Measure the first page we are allowed to see, then shape the book to it.
+  useEffect(() => {
+    const first = pages.find((p) => p.url && !p.locked);
+    if (!first?.url) return;
+    const img = new Image();
+    img.onload = () => {
+      if (!img.naturalWidth || !img.naturalHeight) return;
+      const r = img.naturalHeight / img.naturalWidth;
+      // Sanity bounds: a page stays somewhere between wide and tall.
+      setRatio(Math.min(1.6, Math.max(0.62, r)));
+    };
+    img.src = first.url;
+  }, [pages]);
 
   const leavesArr = useMemo(() => buildLeaves(pages, book.layout, book.kind), [pages, book.layout, book.kind]);
   const leaves = leavesArr.length;
@@ -101,15 +121,15 @@ export default function Reader({
     const fit = () => {
       const vh = window.innerHeight, vw = window.innerWidth;
       let ph = Math.min(vh * 0.76, 760);
-      let pw = ph / RATIO;
-      if (pw * 2 > vw * 0.9) { pw = (vw * 0.9) / 2; ph = pw * RATIO; }
+      let pw = ph / ratio;
+      if (pw * 2 > vw * 0.9) { pw = (vw * 0.9) / 2; ph = pw * ratio; }
       setDim({ pw: Math.round(pw), ph: Math.round(ph) });
     };
     fit();
     window.addEventListener("resize", fit);
     setReduced(window.matchMedia("(prefers-reduced-motion: reduce)").matches);
     return () => window.removeEventListener("resize", fit);
-  }, []);
+  }, [ratio]);
 
   useEffect(() => {
     const a = setTimeout(() => setReady(true), 40);
@@ -323,7 +343,10 @@ export default function Reader({
 
       case "note":
         return (
-          <div style={{ height: "100%", padding: "28px 24px 18px 30px" }}>
+          <div style={{
+            height: "100%",
+            background: "linear-gradient(180deg, #FBF7EC, #F3EDE0)",
+          }}>
             <NoteEditor
               pageId={face.page.id}
               doc={face.page.doc}

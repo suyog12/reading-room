@@ -110,7 +110,7 @@ export default function PeopleView({
         {toAnswer.length > 0 && (
           <Card title="Waiting on you">
             {toAnswer.map((r) => (
-              <PersonRow key={r.person.id} person={r.person}
+              <PersonRow key={`${r.follower_id}-${r.owner_id}`} person={r.person}
                 note={r.iAmGuest ? "invited you to visit" : "asked to visit you"}>
                 <span style={{ display: "flex", gap: 7 }}>
                   <form action={respond}>
@@ -134,7 +134,7 @@ export default function PeopleView({
         {waiting.length > 0 && (
           <Card title="Waiting on them">
             {waiting.map((r) => (
-              <PersonRow key={r.person.id} person={r.person}
+              <PersonRow key={`${r.follower_id}-${r.owner_id}`} person={r.person}
                 note={r.iAmGuest ? "you asked to visit" : "you invited them"}>
                 <form action={respond}>
                   <input type="hidden" name="followerId" value={r.follower_id} />
@@ -150,7 +150,7 @@ export default function PeopleView({
         {canVisit.length > 0 && (
           <Card title="Buildings you can visit">
             {canVisit.map((r) => (
-              <PersonRow key={r.person.id} person={r.person}>
+              <PersonRow key={`${r.follower_id}-${r.owner_id}`} person={r.person}>
                 {r.person.username && (
                   <Link href={`/u/${r.person.username}`} style={{ ...btn(false), textDecoration: "none", display: "inline-block" }}>
                     Visit
@@ -164,7 +164,7 @@ export default function PeopleView({
         {myGuests.length > 0 && (
           <Card title="Your guests">
             {myGuests.map((r) => (
-              <PersonRow key={r.person.id} person={r.person} note="can visit you">
+              <PersonRow key={`${r.follower_id}-${r.owner_id}`} person={r.person} note="can visit you">
                 <form action={respond}>
                   <input type="hidden" name="followerId" value={r.follower_id} />
                   <input type="hidden" name="ownerId" value={r.owner_id} />

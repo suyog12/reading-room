@@ -30,8 +30,17 @@ export default async function VisitPage({
     .from("rooms").select("id, name, floor, position, visibility")
     .eq("owner_id", host.id).order("floor").order("position");
 
-  const onThisFloor = (rooms ?? []).filter((r) => r.floor === floor);
-  const topFloor = Math.max(1, ...(rooms ?? []).map((r) => r.floor));
+  // The door shows for every room, but whether it opens is the database's
+  // answer, not the component's. One call per room; there are at most four.
+  const withAccess = await Promise.all(
+    (rooms ?? []).map(async (r) => {
+      const { data: allowed } = await supabase.rpc("can_read_room", { r: r.id });
+      return { ...r, locked: allowed !== true };
+    })
+  );
+
+  const onThisFloor = withAccess.filter((r) => r.floor === floor);
+  const topFloor = Math.max(1, ...withAccess.map((r) => r.floor));
 
   const noop = async () => { "use server"; };
 

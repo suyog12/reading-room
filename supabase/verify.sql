@@ -10,7 +10,7 @@ from pg_proc
 where proname in (
   'owns_room','owns_case','owns_book','my_profile',
   'can_read_room','can_read_case','can_read_book_contents','book_pages_for_viewer',
-  'refuse_nonempty_case','refuse_nonempty_room',
+  'refuse_nonempty_case','refuse_nonempty_room','can_read_room',
   'search_people','profile_by_username','username_available','can_view','is_approved','is_admin'
 )
 order by proname;
@@ -33,10 +33,21 @@ where (table_name = 'rooms'    and column_name = 'visibility')
    or (table_name = 'profiles' and column_name in ('username','first_name','last_name','dob','email','avatar_key'))
 order by table_name, column_name;
 
--- 4. RLS must be on for every table. Expect 8 rows, all true.
+-- 3b. Room sharing, added in 010. Expect the table, its two policies, and a
+--     constraint allowing open / invited / closed.
+select 'room_guests table' as check, tablename
+from pg_tables where tablename = 'room_guests';
+
+select 'room_guests policies' as check, policyname, cmd
+from pg_policies where tablename = 'room_guests' order by policyname;
+
+select 'room visibility' as check, pg_get_constraintdef(oid) as allows
+from pg_constraint where conname = 'rooms_visibility_check';
+
+-- 4. RLS must be on for every table. Expect 9 rows, all true.
 select 'rls' as check, relname as table_name, relrowsecurity as enabled
 from pg_class
-where relname in ('profiles','rooms','cases','books','pages','notes','follows','doors')
+where relname in ('profiles','rooms','cases','books','pages','notes','follows','doors','room_guests')
 order by relname;
 
 -- 5. Email and date of birth must NOT be readable by ordinary accounts.

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import RoomStage, { C, FLOOR_SHARE } from "@/components/space/RoomStage";
 import AddBookFlow from "@/components/upload/AddBookFlow";
 import { BOOKS_PER_CASE, MAX_CASES_PER_ROOM, SHELVES_PER_CASE, SLOTS_PER_SHELF, VISIBLE_SHELVES } from "@/lib/constants";
-import { Bubble, BubbleTitle, BubbleHint, BubbleButtons, bubbleInput, bubbleSelect, SOFT } from "@/components/ui/Bubble";
+import { Bubble, BubbleTitle, BubbleHint, BubbleButtons, bubbleInput, bubbleSelect, SOFT, INK } from "@/components/ui/Bubble";
 
 type Case = { id: string; label: string; tone: string; position: number };
 type Book = {
@@ -44,6 +44,7 @@ const WALL_NAME = ["Shelves", "More shelves", "More shelves", "The way out"];
 export default function RoomView({
   room, cases, books, selectedCase, canEdit,
   createCase, createNotebook, renameRoom, renameCase, deleteCase, deleteRoom,
+  guests, roomGuestIds, toggleRoomGuest,
 }: {
   room: { id: string; name: string; floor: number; visibility?: string };
   cases: Case[];
@@ -56,6 +57,9 @@ export default function RoomView({
   renameCase: (fd: FormData) => Promise<void>;
   deleteCase: (fd: FormData) => Promise<void>;
   deleteRoom: (fd: FormData) => Promise<void>;
+  guests: { id: string; name: string; username: string | null }[];
+  roomGuestIds: string[];
+  toggleRoomGuest: (fd: FormData) => Promise<void>;
 }) {
   const router = useRouter();
   const [turn, setTurn] = useState(0);
@@ -64,6 +68,11 @@ export default function RoomView({
   const [zoom, setZoom] = useState(1);
   const [making, setMaking] = useState<number | null>(null);
   const [renamingRoom, setRenamingRoom] = useState(false);
+  const [access, setAccess] = useState(room.visibility ?? "open");
+
+  // After a save the server sends back the new value; without this the
+  // dropdown keeps showing whatever was picked last time the bubble opened.
+  useEffect(() => { setAccess(room.visibility ?? "open"); }, [room.visibility]);
   const [renamingCase, setRenamingCase] = useState<Case | null>(null);
 
   const selected = cases.find((c) => c.id === selectedCase) ?? null;
@@ -391,13 +400,77 @@ export default function RoomView({
               <BubbleTitle>Room settings</BubbleTitle>
               <BubbleHint>Currently called {room.name}.</BubbleHint>
               <input name="name" autoFocus defaultValue={room.name} style={bubbleInput} />
-              <select name="visibility" defaultValue={room.visibility ?? "open"} style={bubbleSelect}>
-                <option value="open">Guests may come in</option>
-                <option value="closed">Visitors not allowed</option>
+              <select name="visibility" value={access} onChange={(e) => setAccess(e.target.value)} style={bubbleSelect}>
+                <option value="open">Any of my guests may come in</option>
+                <option value="invited">Only the people I pick</option>
+                <option value="closed">Nobody but me</option>
               </select>
+
               <BubbleButtons onCancel={() => setRenamingRoom(false)} submitLabel="Save" />
             </Bubble>
           </form>
+
+          {access === "invited" && (
+            <div style={{ marginTop: 14 }}>
+              <Bubble tail="none">
+                <div style={{ fontSize: 11.5, color: SOFT, marginBottom: 8, lineHeight: 1.5 }}>
+                  Each name saves as you click it. Set the access above and
+                  press Save when you're done with the rest.
+                </div>
+
+                <div style={{
+                  maxHeight: 210, overflowY: "auto",
+                  border: "2px solid #E4DED2", borderRadius: 13, padding: 6,
+                }}>
+                  {guests.length === 0 ? (
+                    <p style={{ fontSize: 12, color: SOFT, lineHeight: 1.5, margin: 8 }}>
+                      Nobody is a guest of yours yet. Accept someone under People
+                      first, then you can let them into this room.
+                    </p>
+                  ) : (
+                    guests.map((g) => {
+                      const inside = roomGuestIds.includes(g.id);
+                      return (
+                        <div key={g.id} style={{
+                          display: "flex", alignItems: "center", gap: 10,
+                          padding: "7px 6px", borderRadius: 9,
+                          background: inside ? "rgba(47,94,78,.08)" : "transparent",
+                        }}>
+                          <span style={{ flex: 1, fontSize: 13, color: INK }}>
+                            {g.name}
+                            {g.username && (
+                              <span style={{ color: SOFT, marginLeft: 6, fontSize: 11.5 }}>
+                                @{g.username}
+                              </span>
+                            )}
+                          </span>
+                          {/*
+                            A form of its own, not a button inside the
+                            settings form. React uses a submit button's
+                            `name` to route server actions, so the value
+                            has to travel as a hidden input instead.
+                          */}
+                          <form action={toggleRoomGuest}>
+                            <input type="hidden" name="roomId" value={room.id} />
+                            <input type="hidden" name="guestId" value={g.id} />
+                            <input type="hidden" name="letIn" value={inside ? "no" : "yes"} />
+                            <button style={{
+                              padding: "5px 12px", borderRadius: 99, fontSize: 11.5, cursor: "pointer",
+                              border: `2px solid ${inside ? "#2F5E4E" : "#E4DED2"}`,
+                              background: inside ? "#2F5E4E" : "transparent",
+                              color: inside ? "#FFFDF8" : SOFT, fontWeight: 600,
+                            }}>
+                              {inside ? "Can come in" : "Let them in"}
+                            </button>
+                          </form>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </Bubble>
+            </div>
+          )}
 
           <div style={{ marginTop: 12 }}>
             {cases.length > 0 ? (

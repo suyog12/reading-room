@@ -37,6 +37,23 @@ export default async function RoomPage({
         .order("position")
     : { data: [] };
 
+  // Everyone who may already visit this owner, so the settings bubble can
+  // offer them. Plus whoever is already named for this room.
+  const { data: accepted } = await supabase
+    .from("follows")
+    .select("follower_id")
+    .eq("owner_id", user.id)
+    .eq("status", "accepted");
+
+  const guestIds = (accepted ?? []).map((f) => f.follower_id);
+  const { data: guestProfiles } = guestIds.length
+    ? await supabase.from("profiles")
+        .select("id, username, display_name").in("id", guestIds)
+    : { data: [] };
+
+  const { data: named } = await supabase
+    .from("room_guests").select("guest_id").eq("room_id", roomId);
+
   async function createCase(formData: FormData) {
     "use server";
     const label = String(formData.get("label") ?? "").trim() || "New case";
@@ -91,12 +108,48 @@ export default async function RoomPage({
     const id = String(formData.get("roomId"));
     const name = String(formData.get("name") ?? "").trim();
     const visibility = String(formData.get("visibility") ?? "open");
-    if (!name || (visibility !== "open" && visibility !== "closed")) return;
+    if (!name || !["open", "invited", "closed"].includes(visibility)) return;
 
     const supabase = await createClient();
-    await supabase.from("rooms").update({ name, visibility }).eq("id", id);
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    // The guest list is managed a person at a time by toggleRoomGuest, so
+    // saving the name and the access level does not touch it. Bundling the
+    // two meant a tick did nothing until you pressed save, and a tick that
+    // failed to arrive was silent.
+    const { error: roomErr } = await supabase
+      .from("rooms").update({ name, visibility }).eq("id", id);
+    if (roomErr) console.error("[room settings] update failed:", roomErr.message);
+
     revalidatePath(`/room/${id}`);
     revalidatePath("/floor");
+  }
+
+  /** Let one person in, or shut them out. Writes immediately. */
+  async function toggleRoomGuest(formData: FormData) {
+    "use server";
+    const id = String(formData.get("roomId"));
+    const guestId = String(formData.get("guestId"));
+    const letIn = formData.get("letIn") === "yes";
+
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    if (letIn) {
+      // The policy refuses anyone who is not already an accepted guest of
+      // yours, and any room that is not yours.
+      const { error } = await supabase.from("room_guests")
+        .insert({ room_id: id, guest_id: guestId, owner_id: user.id });
+      if (error) console.error("[room guests] could not let them in:", error.message);
+    } else {
+      const { error } = await supabase.from("room_guests")
+        .delete().eq("room_id", id).eq("guest_id", guestId);
+      if (error) console.error("[room guests] could not shut them out:", error.message);
+    }
+
+    revalidatePath(`/room/${id}`);
   }
 
   async function renameCase(formData: FormData) {
@@ -154,6 +207,13 @@ export default async function RoomPage({
       renameCase={renameCase}
       deleteCase={deleteCase}
       deleteRoom={deleteRoom}
+      guests={(guestProfiles ?? []).map((g) => ({
+        id: g.id,
+        name: g.display_name ?? g.username ?? "Someone",
+        username: g.username,
+      }))}
+      roomGuestIds={(named ?? []).map((n) => n.guest_id)}
+      toggleRoomGuest={toggleRoomGuest}
     />
   );
 }

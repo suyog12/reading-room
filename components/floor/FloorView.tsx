@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Space, { C, D, PROJ } from "@/components/space/Space";
 import { Bubble, BubbleTitle, BubbleHint, BubbleButtons, bubbleInput, INK, SOFT, PAPER } from "@/components/ui/Bubble";
 
-type Room = { id: string; name: string; floor: number; position: number; visibility?: string };
+type Room = { id: string; name: string; floor: number; position: number; visibility?: string; locked?: boolean };
 
 /** All four slots are visible without turning: two on the back wall, one each side. */
 const SLOT_LABEL = ["Back left", "Back right", "Left wall", "Right wall"];
@@ -80,7 +80,9 @@ export default function FloorView({
     const SLAB = 14;
     // A guest can see the door and be told it is shut. They cannot open it,
     // and the rooms behind it return nothing regardless of what they click.
-    const shut = !canEdit && room?.visibility === "closed";
+    // Locked is decided server side by can_read_room, which accounts for a
+    // room shared with only some guests.
+    const shut = !canEdit && room?.locked === true;
     return (
       <div style={{ position: "absolute", width: DOOR_W, height: DOOR_H, transformStyle: "preserve-3d", ...style }}>
         {/* architrave: four faces standing out of the wall */}
@@ -201,6 +203,13 @@ export default function FloorView({
           transformStyle: "preserve-3d",
         }}
       >
+        <span style={{
+          position: "absolute", top: -34, left: 0, width: "100%", textAlign: "center",
+          fontSize: 12, letterSpacing: ".24em", textTransform: "uppercase", color: INK,
+        }}>
+          {dir === "up" ? "↑ Upstairs" : "↓ Downstairs"}
+        </span>
+
         {Array.from({ length: STEPS }).map((_, i) => {
           // Going up, treads climb away from you. Going down, they fall away.
           const step = dir === "up" ? i : STEPS - 1 - i;
@@ -234,12 +243,6 @@ export default function FloorView({
             </span>
           );
         })}
-        <span style={{
-          position: "absolute", bottom: -34, left: 0, width: "100%", textAlign: "center",
-          fontSize: 12, letterSpacing: ".24em", textTransform: "uppercase", color: INK,
-        }}>
-          {dir === "up" ? "↑ Upstairs" : "↓ Downstairs"}
-        </span>
       </button>
     );
   };
@@ -259,8 +262,10 @@ export default function FloorView({
             {Doorway(0, { left: 90, bottom: 70 })}
             {Doorway(1, { right: 90, bottom: 70 })}
             <div style={{ position: "absolute", left: "50%", bottom: 34, width: 500, marginLeft: -250, height: 260, transformStyle: "preserve-3d" }}>
-              <Stair dir="up" x={0} enabled={canGoUp} />
-              <Stair dir="down" x={280} enabled={canGoDown} />
+              {/* On the ground floor there is nothing below, so the flight
+                  simply is not there rather than being drawn and greyed. */}
+              <Stair dir="up" x={canGoDown ? 0 : 145} enabled={canGoUp} />
+              {canGoDown && <Stair dir="down" x={280} enabled />}
             </div>
           </>
         }
@@ -268,9 +273,12 @@ export default function FloorView({
         rightWall={Doorway(3, { left: D / 2 - DOOR_W / 2, bottom: 60 })}
       />
 
-      <div style={{ position: "absolute", top: 22, left: 26, zIndex: 5 }}>
-        <div style={{ font: "600 16px/1 Georgia, serif", color: INK }}>Floor {floor}</div>
-        <div style={{ fontSize: 11, color: SOFT, marginTop: 4 }}>
+      <div style={{
+        position: "absolute", top: 20, left: "50%", transform: "translateX(-50%)",
+        zIndex: 5, textAlign: "center",
+      }}>
+        <div style={{ font: "600 18px/1 Georgia, serif", color: INK }}>Floor {floor}</div>
+        <div style={{ fontSize: 11, color: SOFT, marginTop: 5 }}>
           {rooms.length} of 4 rooms{topFloor > floor ? ` · ${topFloor} floors built` : ""}
         </div>
       </div>

@@ -12,8 +12,8 @@ const FONTS = [
 ];
 
 /**
- * Autosaves the TipTap document to notes.doc. Debounced, because a keystroke
- * per write would hammer the database and fight the page turn animation.
+ * Autosaves the TipTap document to notes.doc. Debounced, because a write per
+ * keystroke would hammer the database and fight the page turn.
  */
 export default function NoteEditor({
   pageId, doc, editable, font, size,
@@ -26,6 +26,7 @@ export default function NoteEditor({
 }) {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [saved, setSaved] = useState(true);
+  const [empty, setEmpty] = useState(true);
   const stack = FONTS.find((f) => f.id === font)?.stack ?? FONTS[0].stack;
 
   const editor = useEditor({
@@ -37,10 +38,14 @@ export default function NoteEditor({
     immediatelyRender: false,
     editorProps: {
       attributes: {
-        style: `outline:none;min-height:100%;font:400 ${size}px/1.7 ${stack};color:#231F1A;`,
+        style: `outline:none;height:100%;min-height:100%;font:400 ${size}px/1.75 ${stack};color:#231F1A;`,
       },
     },
+    onCreate({ editor }) {
+      setEmpty(editor.isEmpty);
+    },
     onUpdate({ editor }) {
+      setEmpty(editor.isEmpty);
       if (!editable) return;
       setSaved(false);
       if (timer.current) clearTimeout(timer.current);
@@ -52,24 +57,68 @@ export default function NoteEditor({
     },
   }, [pageId]);
 
-  useEffect(() => {
-    editor?.setEditable(editable);
-  }, [editable, editor]);
-
+  useEffect(() => { editor?.setEditable(editable); }, [editable, editor]);
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
 
   if (!editor) return null;
 
+
   return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
-      <div style={{ flex: 1, overflow: "auto" }}>
-        <EditorContent editor={editor} style={{ height: "100%" }} />
+    /*
+      The click handler and the padding both live on the outermost element.
+      When the padding sat on a parent, the margins of the page looked
+      writable and did nothing — the click never reached the editor.
+    */
+    <div
+      onClick={() => editable && editor.commands.focus("end")}
+      style={{
+        height: "100%", display: "flex", flexDirection: "column",
+        position: "relative", padding: "34px 30px 22px 36px",
+        cursor: editable ? "text" : "default",
+      }}
+    >
+      <style>{`
+        .rr-note, .rr-note .ProseMirror { height: 100%; }
+        .rr-note .ProseMirror { min-height: 100%; }
+      `}</style>
+
+      <div style={{ flex: 1, minHeight: 0, overflow: "auto", position: "relative" }}>
+        {/*
+          A blank page should say what it is for. This sits behind the editor
+          rather than inside the document, so it never becomes content and
+          never has to be deleted before writing.
+        */}
+        {empty && (
+          <div style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+            {editable ? (
+              <>
+                <div style={{ font: `600 ${size + 4}px/1.4 Georgia, serif`, color: "#B9AF9F" }}>
+                  Click here to write
+                </div>
+                <div style={{ fontSize: 12.5, color: "#C6BDAD", marginTop: 8, lineHeight: 1.6 }}>
+                  What was happening, who was there, why you kept this.
+                </div>
+              </>
+            ) : (
+              <div style={{ fontSize: 12.5, color: "#C6BDAD" }}>Nothing written here.</div>
+            )}
+          </div>
+        )}
+
+        <EditorContent editor={editor} style={{ height: "100%" }} className="rr-note" />
       </div>
-      {editable && (
-        <div style={{ fontSize: 9, letterSpacing: ".16em", color: saved ? "#B3AA9E" : "#7C736A", marginTop: 8 }}>
-          {saved ? "SAVED" : "SAVING"}
-        </div>
-      )}
+
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        marginTop: 10, paddingTop: 8, borderTop: "1px solid rgba(35,31,26,.08)",
+      }}>
+        <span style={{ fontSize: 9, letterSpacing: ".18em", color: "#B9AF9F" }}>NOTES</span>
+        {editable && (
+          <span style={{ fontSize: 9, letterSpacing: ".16em", color: saved ? "#C6BDAD" : "#8A8375" }}>
+            {saved ? "SAVED" : "SAVING"}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
