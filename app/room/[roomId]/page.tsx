@@ -3,7 +3,7 @@ import { redirect, notFound } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import RoomView from "@/components/room/RoomView";
 
-const NOTEBOOK_PAGES = 12;
+const NOTEBOOK_PAGES = 2;   // a cover and one spread; add more while reading
 
 export default async function RoomPage({
   params,
@@ -70,7 +70,7 @@ export default async function RoomPage({
   }
 
   /** A notebook is a book with no images: blank pages, notes on both sides. */
-  async function createNotebook(formData: FormData) {
+  async function createNotebook(formData: FormData): Promise<string | void> {
     "use server";
     const title = String(formData.get("title") ?? "").trim() || "Notebook";
     const caseId = String(formData.get("caseId"));
@@ -100,7 +100,11 @@ export default async function RoomPage({
       );
     }
 
-    redirect(`/book/${book.id}`);
+    revalidatePath(`/room/${roomId}`);
+    // Hand the id back rather than redirecting. redirect() works by throwing,
+    // and the caller's try/catch was catching that and reporting it as an
+    // error called NEXT_REDIRECT.
+    return book.id as string;
   }
 
   async function renameRoom(formData: FormData) {

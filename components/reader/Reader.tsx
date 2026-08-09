@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import NoteEditor from "./NoteEditor";
 
@@ -11,11 +11,14 @@ type Page = {
   locked?: boolean;
   /** The owner has hidden it. Always false for anyone else. */
   hidden?: boolean;
+  /** The writing beside it, which hides separately from the page. */
+  noteLocked?: boolean;
+  noteHidden?: boolean;
 };
 type Book = {
   id: string; title: string; author: string | null;
   spine_color: string; layout: string; kind?: string;
-  visibility?: string;
+  visibility?: string; created_at?: string;
 };
 
 /**
@@ -81,11 +84,14 @@ function buildLeaves(pages: Page[], layout: string, kind = "deck"): { recto: Fac
 }
 
 export default function Reader({
-  book, pages, canEdit, backHref, setBookVisibility, setPageVisibility, deleteBook,
+  book, pages, canEdit, backHref, setBookVisibility, setPageVisibility,
+  setNoteVisibility, addPages, deleteBook,
 }: {
   book: Book; pages: Page[]; canEdit: boolean; backHref: string;
   setBookVisibility?: (fd: FormData) => Promise<void>;
   setPageVisibility?: (fd: FormData) => Promise<void>;
+  setNoteVisibility?: (fd: FormData) => Promise<void>;
+  addPages?: (fd: FormData) => Promise<void>;
   deleteBook?: () => Promise<void>;
 }) {
   const router = useRouter();
@@ -96,6 +102,13 @@ export default function Reader({
   const [reduced, setReduced] = useState(false);
   const [dim, setDim] = useState({ pw: 330, ph: 470 });
   const [ratio, setRatio] = useState(DEFAULT_RATIO);
+
+  /**
+   * A spread needs two pages side by side, which does not fit a phone. Below
+   * this width the book becomes a single page you swipe through: the same
+   * content and the same order, without pretending there is a gutter.
+   */
+  const [narrow, setNarrow] = useState(false);
 
   // Measure the first page we are allowed to see, then shape the book to it.
   useEffect(() => {
@@ -113,6 +126,26 @@ export default function Reader({
 
   const leavesArr = useMemo(() => buildLeaves(pages, book.layout, book.kind), [pages, book.layout, book.kind]);
   const leaves = leavesArr.length;
+
+  /**
+   * The desktop book pairs a recto and a verso on each leaf. Flattened, that
+   * becomes: cover, then each leaf's recto followed by the verso that belongs
+   * beside it — which is the order you would read them anyway.
+   */
+  const flat = useMemo(() => {
+    const out: { face: Face; key: string }[] = [];
+    leavesArr.forEach((lf, i) => {
+      if (lf.recto.kind !== "end") out.push({ face: lf.recto, key: `r${i}` });
+      if (lf.verso.kind !== "end") out.push({ face: lf.verso, key: `v${i}` });
+    });
+    return out;
+  }, [leavesArr]);
+
+  const [flatIndex, setFlatIndex] = useState(0);
+  const touchX = useRef<number | null>(null);
+
+  const flatNext = () => setFlatIndex((i) => Math.min(flat.length - 1, i + 1));
+  const flatPrev = () => setFlatIndex((i) => Math.max(0, i - 1));
   const contentCount = Math.max(0, pages.length - 1);
 
   // Fill the screen: as tall as fits, with the spread never wider than the
@@ -120,6 +153,19 @@ export default function Reader({
   useEffect(() => {
     const fit = () => {
       const vh = window.innerHeight, vw = window.innerWidth;
+      const isNarrow = vw < 820;
+      setNarrow(isNarrow);
+
+      if (isNarrow) {
+        // One page, as large as the screen allows.
+        let pw = vw * 0.92;
+        let ph = pw * ratio;
+        const maxH = vh * 0.68;
+        if (ph > maxH) { ph = maxH; pw = ph / ratio; }
+        setDim({ pw: Math.round(pw), ph: Math.round(ph) });
+        return;
+      }
+
       let ph = Math.min(vh * 0.76, 760);
       let pw = ph / ratio;
       if (pw * 2 > vw * 0.9) { pw = (vw * 0.9) / 2; ph = pw * ratio; }
@@ -159,13 +205,13 @@ export default function Reader({
         if (e.key === "Escape") t.blur();
         return;
       }
-      if (e.key === "ArrowRight") { e.preventDefault(); next(); }
-      if (e.key === "ArrowLeft") { e.preventDefault(); prev(); }
+      if (e.key === "ArrowRight") { e.preventDefault(); narrow ? flatNext() : next(); }
+      if (e.key === "ArrowLeft") { e.preventDefault(); narrow ? flatPrev() : prev(); }
       if (e.key === "Escape") shelve();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [next, prev, shelve]);
+  }, [next, prev, shelve, narrow, flat.length]);
 
   const { pw: PW, ph: PH } = dim;
   /** The media pages currently open, so downloading saves what you can see. */
@@ -179,6 +225,21 @@ export default function Reader({
     };
     take(lf?.verso);
     take(cur?.recto);
+    return out.filter((p, i, a) => a.findIndex((q) => q.id === p.id) === i);
+  })();
+
+  /**
+   * The pages whose WRITING is on screen. Separate from `visible`, which
+   * tracks pictures — in a notebook there are no pictures at all, which is
+   * why the note controls were never appearing.
+   */
+  const visibleNotes: Page[] = (() => {
+    const out: Page[] = [];
+    const take = (f: any) => {
+      if (f?.kind === "note" && f.page) out.push(f.page);
+    };
+    take(leavesArr[leaf - 1]?.verso);
+    take(leavesArr[leaf]?.recto);
     return out.filter((p, i, a) => a.findIndex((q) => q.id === p.id) === i);
   })();
 
@@ -215,6 +276,47 @@ export default function Reader({
   const renderFace = (face: Face, flipped: boolean, leafIndex: number) => {
     switch (face.kind) {
       case "cover":
+        // No image behind it — a notebook, or a book whose first page cannot
+        // be shown. Bind it in its own cloth with the title in gold.
+        if (!face.page?.url) {
+          const dated = book.created_at
+            ? new Date(book.created_at).toLocaleDateString(undefined, {
+                year: "numeric", month: "long", day: "numeric",
+              })
+            : null;
+          return (
+            <div style={{
+              position: "absolute", inset: 0,
+              background: `linear-gradient(150deg, ${book.spine_color}, rgba(0,0,0,.55))`,
+              display: "flex", flexDirection: "column",
+              alignItems: "center", justifyContent: "center",
+              padding: "40px 34px", textAlign: "center",
+            }}>
+              <span style={{ width: 58, height: 2, background: "#E7CE92", opacity: .8, marginBottom: 26 }} />
+
+              <div style={{
+                font: `700 ${Math.max(22, PW * 0.085)}px/1.2 Georgia, serif`,
+                color: "#EBD6A6",
+                textShadow: "0 2px 10px rgba(0,0,0,.45)",
+                letterSpacing: ".01em",
+              }}>
+                {book.title}
+              </div>
+
+              {(book.author || dated) && (
+                <div style={{
+                  marginTop: 18, fontSize: 12, letterSpacing: ".18em",
+                  textTransform: "uppercase", color: "rgba(235,214,166,.72)", lineHeight: 1.9,
+                }}>
+                  {book.author && <div>{book.author}</div>}
+                  {dated && <div style={{ fontSize: 10.5, letterSpacing: ".2em" }}>{dated}</div>}
+                </div>
+              )}
+
+              <span style={{ width: 58, height: 2, background: "#E7CE92", opacity: .8, marginTop: 26 }} />
+            </div>
+          );
+        }
         return (
           <div style={{
             position: "absolute", inset: 0, overflow: "hidden",
@@ -342,11 +444,34 @@ export default function Reader({
         );
 
       case "note":
+        if (face.page.noteLocked) {
+          return (
+            <div style={{
+              position: "absolute", inset: 0, display: "grid", placeItems: "center",
+              background: "#F2EDE1",
+            }}>
+              <span style={{ fontSize: 10, letterSpacing: ".24em", textTransform: "uppercase", color: "#B3AA9E" }}>
+                Private
+              </span>
+            </div>
+          );
+        }
         return (
           <div style={{
-            height: "100%",
+            height: "100%", position: "relative",
             background: "linear-gradient(180deg, #FBF7EC, #F3EDE0)",
+            opacity: face.page.noteHidden ? .45 : 1,
           }}>
+            {face.page.noteHidden && (
+              <span style={{
+                position: "absolute", top: 12, left: "50%", transform: "translateX(-50%)",
+                background: "rgba(35,31,26,.86)", color: "#FFFDF8", borderRadius: 99,
+                padding: "4px 11px", fontSize: 9, letterSpacing: ".18em",
+                textTransform: "uppercase", zIndex: 2,
+              }}>
+                Writing hidden
+              </span>
+            )}
             <NoteEditor
               pageId={face.page.id}
               doc={face.page.doc}
@@ -380,6 +505,49 @@ export default function Reader({
       ? "linear-gradient(to right, rgba(0,0,0,.19), rgba(0,0,0,0) 10%, rgba(0,0,0,0) 90%, rgba(0,0,0,.06)), #F6F1E6"
       : "linear-gradient(to left, rgba(0,0,0,.19), rgba(0,0,0,0) 10%, rgba(0,0,0,0) 90%, rgba(0,0,0,.06)), #F6F1E6",
   });
+
+  if (narrow) {
+    const current = flat[flatIndex];
+    return (
+      <main
+        style={{
+          position: "fixed", inset: 0, display: "flex", flexDirection: "column",
+          alignItems: "center", justifyContent: "center", gap: 16, fontFamily: "system-ui",
+          background: "radial-gradient(120% 90% at 50% 34%, #3A342C, #17140F)",
+          touchAction: "pan-y",
+        }}
+        onTouchStart={(e) => { touchX.current = e.touches[0].clientX; }}
+        onTouchEnd={(e) => {
+          if (touchX.current === null) return;
+          const dx = e.changedTouches[0].clientX - touchX.current;
+          touchX.current = null;
+          if (Math.abs(dx) < 45) return;          // a tap, not a swipe
+          dx < 0 ? flatNext() : flatPrev();
+        }}
+      >
+        <div style={{
+          width: PW, height: PH, position: "relative", overflow: "hidden",
+          borderRadius: 6, background: "#F6F1E6",
+          boxShadow: "0 24px 50px rgba(0,0,0,.5)",
+        }}>
+          {current && renderFace(current.face, true, flatIndex)}
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <Ctl onClick={flatPrev} disabled={flatIndex === 0}>←</Ctl>
+          <span style={{ fontSize: 11, letterSpacing: ".18em", color: "rgba(255,250,240,.7)", minWidth: 74, textAlign: "center" }}>
+            {flatIndex + 1} / {flat.length}
+          </span>
+          <Ctl onClick={flatNext} disabled={flatIndex >= flat.length - 1}>→</Ctl>
+          <Ctl onClick={shelve}>Shelve</Ctl>
+        </div>
+
+        <span style={{ fontSize: 10.5, color: "rgba(255,250,240,.4)", letterSpacing: ".1em" }}>
+          swipe to turn
+        </span>
+      </main>
+    );
+  }
 
   return (
     <main style={{
@@ -446,6 +614,22 @@ export default function Reader({
             </Ctl>
           </form>
         ))}
+        {canEdit && setNoteVisibility && visibleNotes.map((p) => (
+          p.noteLocked ? null : (
+            <form action={setNoteVisibility} key={`n-${p.id}`}>
+              <input type="hidden" name="pageId" value={p.id} />
+              <input type="hidden" name="visibility" value={p.noteHidden ? "open" : "hidden"} />
+              <Ctl onClick={() => {}}>
+                {p.noteHidden ? "Show writing" : "Hide writing"} {String(p.position).padStart(2, "0")}
+              </Ctl>
+            </form>
+          )
+        ))}
+        {canEdit && addPages && book.kind === "notebook" && (
+          <form action={addPages}>
+            <Ctl onClick={() => {}}>+ 2 pages</Ctl>
+          </form>
+        )}
         {canEdit && setBookVisibility && (
           <form action={setBookVisibility}>
             <input type="hidden" name="visibility" value={book.visibility === "private" ? "open" : "private"} />

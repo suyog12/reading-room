@@ -32,7 +32,7 @@ export default function AddBookFlow({
   caseId: string;
   takenSlots: number;
   onDone: () => void;
-  createNotebook: (fd: FormData) => Promise<void>;
+  createNotebook: (fd: FormData) => Promise<string | void>;
 }) {
   const router = useRouter();
   const [step, setStep] = useState(0);
@@ -83,7 +83,9 @@ export default function AddBookFlow({
         fd.set("title", title.trim());
         fd.set("caseId", caseId);
         fd.set("position", String(takenSlots));
-        await createNotebook(fd);
+        const bookId = await createNotebook(fd);
+        if (typeof bookId === "string") router.push(`/book/${bookId}`);
+        else { onDone(); router.refresh(); }
         return;
       }
 

@@ -52,7 +52,7 @@ export default function RoomView({
   selectedCase: string | null;
   canEdit: boolean;
   createCase: (fd: FormData) => Promise<void>;
-  createNotebook: (fd: FormData) => Promise<void>;
+  createNotebook: (fd: FormData) => Promise<string | void>;
   renameRoom: (fd: FormData) => Promise<void>;
   renameCase: (fd: FormData) => Promise<void>;
   deleteCase: (fd: FormData) => Promise<void>;
